@@ -1,22 +1,25 @@
 import {
-    collection,
-    doc,
-    getDocs,
-    onSnapshot,
-    query,
-    where,
-    type DocumentData
+  collection,
+  doc,
+  getDocs,
+  onSnapshot,
+  query,
+  updateDoc,
+  where,
+  writeBatch,
+  type DocumentData
 } from 'firebase/firestore';
 import { useEffect, useState } from 'react';
 import {
-    ActivityIndicator,
-    Pressable,
-    RefreshControl,
-    SafeAreaView,
-    ScrollView,
-    StyleSheet,
-    Text,
-    View
+  ActivityIndicator,
+  Alert,
+  Pressable,
+  RefreshControl,
+  SafeAreaView,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View
 } from 'react-native';
 
 import { useAuth } from '../../components/AuthProvider';
@@ -28,6 +31,7 @@ const BORDER = '#1f2937';
 const ACCENT = '#22c55e';
 const TEXT = '#f9fafb';
 const MUTED = '#9ca3af';
+const DANGER = '#ef4444';
 
 type Duo = {
   id: string;
@@ -39,6 +43,8 @@ type Duo = {
   partnerAge?: number;
   partnerGoal?: string;
   createdAt: any;
+  endRequestedBy?: string | null;
+  endApprovedBy?: string[];
 };
 
 export default function DuoScreen() {
@@ -46,7 +52,32 @@ export default function DuoScreen() {
   const [duo, setDuo] = useState<Duo | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [activeDuoId, setActiveDuoId] = useState<string | null>(null);
 
+  // 1️⃣ Listen to user document
+  useEffect(() => {
+    if (!db || !user?.uid) {
+      setActiveDuoId(null);
+      return;
+    }
+
+    const userRef = doc(db, "users", user.uid);
+
+    const unsubscribe = onSnapshot(userRef, (snap) => {
+      if (!snap.exists()) {
+        setActiveDuoId(null);
+        return;
+      }
+
+      const data = snap.data();
+      setActiveDuoId(data?.activeDuoId ?? null);
+    });
+
+    return unsubscribe;
+  }, [user]);
+
+
+  // 2️⃣ Listen to duo document separately
   useEffect(() => {
     if (!db || !user?.uid) {
       setDuo(null);
@@ -54,88 +85,67 @@ export default function DuoScreen() {
       return;
     }
 
+    if (!activeDuoId) {
+      setDuo(null);
+      setLoading(false);
+      return;
+    }
+
     setLoading(true);
 
-    // Real-time listener for current user document to get activeDuoId
-    const userRef = doc(db, 'users', user.uid);
-    const unsubscribeUser = onSnapshot(userRef, async (userSnap) => {
-      if (!userSnap.exists()) {
+    const duoRef = doc(db, "duos", activeDuoId);
+
+    const unsubscribe = onSnapshot(duoRef, async (duoSnap) => {
+      if (!duoSnap.exists()) {
         setDuo(null);
         setLoading(false);
         return;
       }
 
-      const userData = userSnap.data();
-      const activeDuoId = userData?.activeDuoId;
+      const duoData = duoSnap.data() as DocumentData;
 
-      // If no active duo, show "No bond yet"
-      if (!activeDuoId) {
+      // 🔥 IMPORTANT: ignore ended duos
+      if (duoData.status === "ended") {
         setDuo(null);
         setLoading(false);
         return;
       }
 
-      // Listen to the duo document
-      const duoRef = doc(db!, 'duos', activeDuoId);
-      const unsubscribeDuo = onSnapshot(duoRef, async (duoSnap) => {
-        if (!duoSnap.exists()) {
-          setDuo(null);
-          setLoading(false);
-          return;
-        }
+      const partnerId = duoData.members.find(
+        (uid: string) => uid !== user.uid
+      );
 
-        const duoData = duoSnap.data() as DocumentData;
-        
-        // Determine partner ID (the other member in the members array)
-        const partnerId = duoData.members.find((uid: string) => uid !== user.uid);
-
-        if (!partnerId) {
-          console.error('[Duo] Invalid duo members array');
-          setDuo(null);
-          setLoading(false);
-          return;
-        }
-
-        // Fetch partner's user details
-        const usersRef = collection(db!, 'users');
-        const userQuery = query(usersRef, where('__name__', '==', partnerId));
-        const userSnapshot = await getDocs(userQuery);
-
-        const partnerData = userSnapshot.docs[0]?.data() as DocumentData;
-
-        const resolvedDuo: Duo = {
-          id: duoSnap.id,
-          members: duoData.members,
-          status: duoData.status,
-          duoStreak: duoData.duoStreak || 0,
-          lastDuoWorkout: duoData.lastDuoWorkout,
-          partnerName: partnerData?.name || 'Unknown',
-          partnerAge: partnerData?.age,
-          partnerGoal: partnerData?.goal,
-          createdAt: duoData.createdAt,
-        };
-
-        setDuo(resolvedDuo);
-        setLoading(false);
-      }, (error) => {
-        console.error('[Duo] Error listening to duo:', error);
+      if (!partnerId) {
         setDuo(null);
         setLoading(false);
+        return;
+      }
+
+      const partnerSnap = await getDocs(
+        query(collection(db, "users"), where("__name__", "==", partnerId))
+      );
+
+      const partnerData = partnerSnap.docs[0]?.data();
+
+      setDuo({
+        id: duoSnap.id,
+        members: duoData.members,
+        status: duoData.status,
+        duoStreak: duoData.duoStreak || 0,
+        lastDuoWorkout: duoData.lastDuoWorkout,
+        partnerName: partnerData?.name || "Unknown",
+        partnerAge: partnerData?.age,
+        partnerGoal: partnerData?.goal,
+        createdAt: duoData.createdAt,
+        endRequestedBy: duoData.endRequestedBy || null,
+        endApprovedBy: duoData.endApprovedBy || [],
       });
 
-      return () => {
-        unsubscribeDuo();
-      };
-    }, (error) => {
-      console.error('[Duo] Error listening to user:', error);
-      setDuo(null);
       setLoading(false);
     });
 
-    return () => {
-      unsubscribeUser();
-    };
-  }, [user]);
+    return unsubscribe;
+  }, [activeDuoId, user]);
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -147,6 +157,88 @@ export default function DuoScreen() {
   const handleStartWorkout = () => {
     // Placeholder for workout logic
     console.log('Start workout with', duo?.partnerName);
+  };
+
+  const handleApproveEnd = async () => {
+    if (!duo || !user?.uid || !db) return;
+
+    try {
+      const batch = writeBatch(db);
+      const duoRef = doc(db, "duos", duo.id);
+
+      const updatedApprovals = [...(duo.endApprovedBy || []), user.uid];
+
+      if (updatedApprovals.length < 2) {
+        await updateDoc(duoRef, {
+          endApprovedBy: updatedApprovals,
+        });
+        return;
+      }
+
+      // Both approved → end partnership
+      batch.update(duoRef, {
+        status: "ended",
+      });
+
+      duo.members.forEach((memberId: string) => {
+        batch.update(doc(db, "users", memberId), {
+          activeDuoId: null,
+        });
+      });
+
+      await batch.commit();
+
+    } catch (error) {
+      Alert.alert("Error", "Failed to approve ending.");
+    }
+  };
+
+  const handleRequestEnd = async () => {
+    if (!duo || !user?.uid || !db) return;
+
+    try {
+      const duoRef = doc(db, "duos", duo.id);
+
+      await updateDoc(duoRef, {
+        status: "ending_requested",
+        endRequestedBy: user.uid,
+        endApprovedBy: [user.uid],
+      });
+
+    } catch (error) {
+      Alert.alert("Error", "Failed to request ending.");
+    }
+  };
+
+  const handleCancelEndRequest = async () => {
+    if (!duo || !db) return;
+
+    try {
+      const duoRef = doc(db, "duos", duo.id);
+
+      await updateDoc(duoRef, {
+        status: "active",
+        endRequestedBy: null,
+        endApprovedBy: [],
+      });
+
+    } catch (error) {
+      Alert.alert("Error", "Failed to cancel end request.");
+    }
+  };
+
+  const handleRejectEndRequest = async () => {
+    if (!duo || !db) return;
+
+    try {
+      await updateDoc(doc(db, "duos", duo.id), {
+        status: "active",
+        endRequestedBy: null,
+        endApprovedBy: [],
+      });
+    } catch (error) {
+      Alert.alert("Error", "Failed to reject end request.");
+    }
   };
 
   return (
@@ -223,6 +315,67 @@ export default function DuoScreen() {
                 </View>
               </View>
             </View>
+
+            {duo.status === "active" && (
+              <Pressable
+                style={({ pressed }) => [
+                  styles.endButton,
+                  pressed && styles.endButtonPressed,
+                ]}
+                onPress={handleRequestEnd}
+              >
+                <Text style={styles.endButtonText}>End Partnership</Text>
+              </Pressable>
+            )}
+
+            {duo.status === "ending_requested" && (
+              <View style={styles.endRequestContainer}>
+                {duo.endRequestedBy === user?.uid ? (
+                  // Case 1: Current user requested it
+                  <>
+                    <Text style={styles.waitingText}>
+                      Waiting for partner to approve...
+                    </Text>
+                    <Pressable
+                      style={({ pressed }) => [
+                        styles.cancelButton,
+                        pressed && styles.cancelButtonPressed,
+                      ]}
+                      onPress={handleCancelEndRequest}
+                    >
+                      <Text style={styles.cancelButtonText}>Cancel End Request</Text>
+                    </Pressable>
+                  </>
+                ) : (
+                  // Case 2: Partner requested it
+                  <>
+                    <Text style={styles.endRequestText}>
+                      Your partner wants to end the partnership
+                    </Text>
+                    <View style={styles.buttonRow}>
+                      <Pressable
+                        style={({ pressed }) => [
+                          styles.approveButton,
+                          pressed && styles.approveButtonPressed,
+                        ]}
+                        onPress={handleApproveEnd}
+                      >
+                        <Text style={styles.approveButtonText}>Approve</Text>
+                      </Pressable>
+                      <Pressable
+                        style={({ pressed }) => [
+                          styles.rejectButton,
+                          pressed && styles.rejectButtonPressed,
+                        ]}
+                        onPress={handleRejectEndRequest}
+                      >
+                        <Text style={styles.rejectButtonText}>Reject</Text>
+                      </Pressable>
+                    </View>
+                  </>
+                )}
+              </View>
+            )}
           </View>
         )}
       </ScrollView>
@@ -382,6 +535,93 @@ const styles = StyleSheet.create({
     height: 40,
     backgroundColor: BORDER,
     marginHorizontal: 20,
+  },
+  endButton: {
+    backgroundColor: DANGER,
+    borderRadius: 12,
+    paddingHorizontal: 32,
+    paddingVertical: 12,
+    marginTop: 8,
+  },
+  endButtonPressed: {
+    opacity: 0.8,
+  },
+  endButtonText: {
+    color: TEXT,
+    fontSize: 16,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+  endRequestContainer: {
+    marginTop: 8,
+    alignItems: 'center',
+  },
+  endRequestText: {
+    color: TEXT,
+    fontSize: 16,
+    fontWeight: '600',
+    textAlign: 'center',
+    marginBottom: 12,
+  },
+  approveButton: {
+    backgroundColor: ACCENT,
+    borderRadius: 12,
+    paddingHorizontal: 32,
+    paddingVertical: 12,
+  },
+  approveButtonPressed: {
+    opacity: 0.8,
+  },
+  approveButtonText: {
+    color: DARK_BG,
+    fontSize: 16,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+  waitingText: {
+    color: MUTED,
+    fontSize: 16,
+    fontWeight: '500',
+    textAlign: 'center',
+    fontStyle: 'italic',
+  },
+  buttonRow: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 12,
+  },
+  cancelButton: {
+    backgroundColor: DANGER,
+    borderRadius: 12,
+    paddingHorizontal: 32,
+    paddingVertical: 12,
+    marginTop: 12,
+  },
+  cancelButtonPressed: {
+    opacity: 0.8,
+  },
+  cancelButtonText: {
+    color: TEXT,
+    fontSize: 16,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+  rejectButton: {
+    backgroundColor: 'transparent',
+    borderRadius: 12,
+    paddingHorizontal: 32,
+    paddingVertical: 12,
+    borderWidth: 1,
+    borderColor: DANGER,
+  },
+  rejectButtonPressed: {
+    opacity: 0.8,
+  },
+  rejectButtonText: {
+    color: DANGER,
+    fontSize: 16,
+    fontWeight: '600',
+    textAlign: 'center',
   },
   scrollView: {
     flex: 1,

@@ -1,27 +1,27 @@
-import { StatusBar } from "expo-status-bar";
 import {
-  addDoc,
-  collection,
-  doc,
-  getDocs,
-  onSnapshot,
-  orderBy,
-  query,
-  serverTimestamp,
-  where,
-  type DocumentData,
+    addDoc,
+    collection,
+    doc,
+    getDocs,
+    onSnapshot,
+    orderBy,
+    query,
+    serverTimestamp,
+    updateDoc,
+    where,
+    type DocumentData
 } from "firebase/firestore";
 import { useEffect, useState } from "react";
 import {
-  ActivityIndicator,
-  FlatList,
-  Pressable,
-  RefreshControl,
-  SafeAreaView,
-  StyleSheet,
-  Text,
-  View
+    ActivityIndicator,
+    FlatList,
+    Pressable,
+    RefreshControl,
+    StyleSheet,
+    Text,
+    View
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 
 import { useAuth } from "../../components/AuthProvider";
 import { db } from "../../lib/firebase";
@@ -42,8 +42,19 @@ type DiscoverUser = {
   bio: string;
 };
 
+function RequestsSection() {
+  return (
+    <View style={styles.requestsContainer}>
+      <Text style={styles.sectionTitle}>Bond Requests</Text>
+      <Text style={styles.emptyText}>No pending requests</Text>
+      <Text style={styles.subText}>
+        When someone sends you a bond request, it will appear here.
+      </Text>
+    </View>
+  );
+}
 
-export default function DiscoverScreen() {
+function useDiscoverUsers() {
   const { logout, user } = useAuth();
   const [members, setMembers] = useState<DiscoverUser[]>([]);
   const [loading, setLoading] = useState(true);
@@ -55,8 +66,6 @@ export default function DiscoverScreen() {
   useEffect(() => {
     if (!db || !user?.uid) {
       setMembers([]);
-      setActiveDuoId(null);
-      setPendingOutgoing([]);
       setLoading(false);
       return;
     }
@@ -76,64 +85,50 @@ export default function DiscoverScreen() {
         const data = docSnap.data() as DocumentData;
         return {
           id: docSnap.id,
-          name: data.name ?? "Unknown",
-          age: typeof data.age === "number" ? data.age : 0,
-          goal: data.goal ?? "",
-          preferredTime: data.preferredTime ?? "",
-          bio: data.bio ?? "",
+          name: data.name || "Unknown",
+          age: data.age || 0,
+          goal: data.goal || "",
+          preferredTime: data.preferredTime || "",
+          bio: data.bio || "",
         };
       });
-
       setMembers(items);
       setLoading(false);
-    }, (error) => {
-      console.error("[Discover] Error listening to users:", error);
-      setMembers([]);
-      setLoading(false);
+    });
+
+    // Real-time listener for current user's activeDuoId
+    const userRef = doc(db, "users", user.uid);
+    const unsubscribeUser = onSnapshot(userRef, (snap) => {
+      if (!snap.exists()) return;
+      const data = snap.data();
+      setActiveDuoId(data?.activeDuoId || null);
+    });
+
+    // Real-time listener for outgoing bond requests
+    const bondsRef = collection(db, "bondRequests");
+    const bondsQuery = query(
+      bondsRef,
+      where("from", "==", user.uid)
+    );
+
+    const unsubscribeBonds = onSnapshot(bondsQuery, (snapshot) => {
+      const pendingIds = snapshot.docs
+        .filter((docSnap) => docSnap.data().status === "pending")
+        .map((docSnap) => docSnap.data().to);
+      setPendingOutgoing(pendingIds);
     });
 
     return () => {
       unsubscribeUsers();
+      unsubscribeUser();
+      unsubscribeBonds();
     };
   }, [user]);
 
-  useEffect(() => {
-    if (!db || !user?.uid) return;
-
-    const unsubscribe = onSnapshot(doc(db, "users", user.uid), (snap) => {
-      const data = snap.data();
-      setActiveDuoId(data?.activeDuoId ?? null);
-    });
-
-    return unsubscribe;
-  }, [user]);
-
-  useEffect(() => {
-    if (!db || !user?.uid) return;
-
-    const q = query(
-      collection(db, "bondRequests"),
-      where("from", "==", user.uid),
-      where("status", "==", "pending")
-    );
-
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const ids = snapshot.docs.map((doc) => doc.data().to);
-      setPendingOutgoing(ids);
-    });
-
-    return unsubscribe;
-  }, [user]);
-
-
   const onRefresh = async () => {
     setRefreshing(true);
-    // Real-time listeners will automatically update
-    setRefreshing(false);
-  };
-
-  const handleLogout = async () => {
-    await logout();
+    // Refresh logic is handled by real-time listeners
+    setTimeout(() => setRefreshing(false), 1000);
   };
 
   const sendBondRequest = async (toUid: string) => {
@@ -169,7 +164,10 @@ export default function DiscoverScreen() {
         : null;
 
       if (existingDoc) {
-        return;
+        const existingStatus = existingDoc.data().status;
+        if (existingStatus === "pending") {
+          return;
+        }
       }
 
       await addDoc(bondsRef, {
@@ -182,6 +180,27 @@ export default function DiscoverScreen() {
       console.error("[Discover] Error sending bond request", error);
     } finally {
       setSendingFor(null);
+    }
+  };
+
+  const handleCancelBondRequest = async (toUid: string) => {
+    if (!db || !user?.uid) return;
+
+    try {
+      const q = query(
+        collection(db, "bondRequests"),
+        where("from", "==", user.uid),
+        where("to", "==", toUid),
+        where("status", "==", "pending")
+      );
+      const snapshot = await getDocs(q);
+      snapshot.forEach(async (docSnap) => {
+        await updateDoc(doc(db, "bondRequests", docSnap.id), {
+          status: "cancelled",
+        });
+      });
+    } catch (error) {
+      console.error("Cancel error:", error);
     }
   };
 
@@ -208,17 +227,21 @@ export default function DiscoverScreen() {
           </Text>
         ) : null}
         {item.bio ? <Text style={styles.bio}>{item.bio}</Text> : null}
-
         <View style={styles.actionsRow}>
           {isBonded ? (
             <Text style={styles.bondedText}>Already Bonded</Text>
           ) : isPending ? (
-            <Text style={styles.pendingText}>Request Pending</Text>
+            <Pressable
+              style={styles.cancelRequestButton}
+              onPress={() => handleCancelBondRequest(item.id)}
+            >
+              <Text style={styles.cancelRequestText}> Cancel Request </Text>
+            </Pressable>
           ) : (
             <Pressable
               style={({ pressed }) => [
                 styles.requestButton,
-                (pressed || isSending) && styles.requestButtonPressed,
+                pressed && styles.requestButtonPressed,
               ]}
               onPress={() => sendBondRequest(item.id)}
               disabled={isSending}
@@ -237,46 +260,41 @@ export default function DiscoverScreen() {
     );
   };
 
+  return {
+    users: members,
+    loading,
+    refreshing,
+    renderItem,
+    onRefresh,
+  };
+}
+
+export default function PeopleScreen() {
+  const { users, loading, renderItem, onRefresh } = useDiscoverUsers();
+
   return (
     <SafeAreaView style={styles.container}>
-      <StatusBar style="light" />
-      <View style={styles.header}>
-        <Text style={styles.title}>Discover</Text>
-        <Pressable
-          style={({ pressed }) => [
-            styles.logoutButton,
-            pressed && styles.logoutButtonPressed,
-          ]}
-          onPress={handleLogout}
-        >
-          <Text style={styles.logoutText}>Sign out</Text>
-        </Pressable>
-      </View>
-
-      {loading ? (
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color={ACCENT} />
-          <Text style={styles.loadingText}>Finding gym members...</Text>
-        </View>
-      ) : members.length === 0 ? (
-        <View style={styles.emptyContainer}>
-          <Text style={styles.emptyText}>No gym members yet</Text>
-          <Text style={styles.emptySubtext}>
-            Invite friends to join GymBond and build your crew.
-          </Text>
-        </View>
-      ) : (
-        <FlatList
-          data={members}
-          keyExtractor={(item) => item.id}
-          renderItem={renderItem}
-          contentContainerStyle={styles.listContent}
-          showsVerticalScrollIndicator={false}
-          refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-          }
-        />
-      )}
+      <FlatList
+        data={users}
+        keyExtractor={(item) => item.id}
+        renderItem={renderItem}
+        ListHeaderComponent={
+          <View style={{ padding: 20 }}>
+            <Text style={styles.mainTitle}>People</Text>
+            <View style={{ marginTop: 24 }}>
+              <RequestsSection />
+            </View>
+            <Text style={{ color: TEXT, fontSize: 20, marginTop: 32 }}>
+              Discover
+            </Text>
+          </View>
+        }
+        contentContainerStyle={{ paddingBottom: 20 }}
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl refreshing={loading} onRefresh={onRefresh} />
+        }
+      />
     </SafeAreaView>
   );
 }
@@ -286,119 +304,96 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: DARK_BG,
   },
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 24,
-    paddingTop: 16,
-    paddingBottom: 8,
-  },
-  title: {
+  mainTitle: {
     fontSize: 26,
     fontWeight: "700",
     color: TEXT,
   },
-  logoutButton: {
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: BORDER,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
+  requestsContainer: {
+    marginBottom: 16,
   },
-  logoutButtonPressed: {
-    opacity: 0.8,
-  },
-  logoutText: {
-    color: MUTED,
-    fontSize: 12,
-  },
-  loadingContainer: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  loadingText: {
-    marginTop: 12,
+  sectionTitle: {
+    fontSize: 20,
+    fontWeight: "600",
     color: TEXT,
-  },
-  emptyContainer: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: 32,
+    marginBottom: 8,
   },
   emptyText: {
+    fontSize: 16,
     color: TEXT,
-    fontSize: 18,
-    fontWeight: "600",
   },
-  emptySubtext: {
-    marginTop: 8,
-    color: MUTED,
-    textAlign: "center",
+  subText: {
+    marginTop: 4,
     fontSize: 13,
-  },
-  listContent: {
-    paddingHorizontal: 24,
-    paddingVertical: 16,
-    gap: 12,
+    color: MUTED,
   },
   card: {
     backgroundColor: CARD_BG,
     borderRadius: 16,
-    padding: 16,
+    padding: 20,
     borderWidth: 1,
     borderColor: BORDER,
+    marginBottom: 16,
   },
   name: {
-    color: TEXT,
     fontSize: 18,
     fontWeight: "600",
+    color: TEXT,
+    marginBottom: 8,
   },
   meta: {
-    marginTop: 6,
+    fontSize: 14,
     color: MUTED,
-    fontSize: 13,
+    marginBottom: 4,
   },
   metaValue: {
-    color: ACCENT,
+    color: TEXT,
+    fontWeight: "500",
   },
   bio: {
-    marginTop: 10,
-    color: TEXT,
     fontSize: 14,
+    color: TEXT,
+    lineHeight: 20,
   },
   actionsRow: {
-    marginTop: 12,
     flexDirection: "row",
-    justifyContent: "flex-end",
-    alignItems: "center",
+    gap: 12,
   },
   requestButton: {
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: ACCENT,
-    paddingHorizontal: 14,
-    paddingVertical: 6,
+    backgroundColor: ACCENT,
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    flex: 1,
+    alignItems: "center",
   },
   requestButtonPressed: {
-    opacity: 0.85,
+    opacity: 0.7,
   },
   requestButtonText: {
-    color: ACCENT,
-    fontSize: 13,
+    color: DARK_BG,
     fontWeight: "600",
+    fontSize: 16,
   },
-  pendingText: {
-    color: ACCENT,
-    fontSize: 13,
-    fontWeight: "500",
+  cancelRequestButton: {
+    borderWidth: 1,
+    borderColor: BORDER,
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    flex: 1,
+    alignItems: "center",
+  },
+  cancelRequestText: {
+    color: TEXT,
+    fontWeight: "600",
+    fontSize: 16,
   },
   bondedText: {
     color: MUTED,
-    fontSize: 13,
-    fontWeight: "500",
+    fontWeight: "600",
+    fontSize: 16,
+    flex: 1,
+    textAlign: "center",
   },
 });
-

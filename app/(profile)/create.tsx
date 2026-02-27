@@ -1,19 +1,19 @@
 import { useRouter } from "expo-router";
 import { useState } from "react";
 import {
-  KeyboardAvoidingView,
-  Platform,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
+    KeyboardAvoidingView,
+    Platform,
+    Pressable,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TextInput,
+    View,
 } from "react-native";
 
+import { doc, serverTimestamp, setDoc } from "firebase/firestore";
 import { useAuth } from "../../components/AuthProvider";
 import { db } from "../../lib/firebase";
-import { doc, serverTimestamp, setDoc } from "firebase/firestore";
 
 const DARK_BG = "#020617";
 const CARD_BG = "#020617";
@@ -91,7 +91,7 @@ export default function CreateProfileScreen() {
       });
 
       markProfileCreated();
-      router.replace("/");
+      router.replace("/(app)/today");
     } catch (e: any) {
       setError(e?.message ?? "Failed to save profile.");
     } finally {

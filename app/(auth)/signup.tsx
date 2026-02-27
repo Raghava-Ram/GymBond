@@ -45,7 +45,7 @@ export default function SignupScreen() {
       return;
     }
 
-    router.replace("/");
+    router.replace("/(app)/today");
   };
 
   return (

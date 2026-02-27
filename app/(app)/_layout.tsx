@@ -1,73 +1,57 @@
-import { Tabs } from 'expo-router';
-import { Ionicons } from '@expo/vector-icons';
+import { Ionicons } from "@expo/vector-icons";
+import { Tabs } from "expo-router";
 
-const DARK_BG = '#020617';
-const TAB_BAR_BG = '#0f172a';
-const TAB_ACTIVE = '#22c55e';
-const TAB_INACTIVE = '#6b7280';
-
-export default function TabLayout() {
+export default function AppLayout() {
   return (
     <Tabs
       screenOptions={{
-        tabBarActiveTintColor: TAB_ACTIVE,
-        tabBarInactiveTintColor: TAB_INACTIVE,
+        headerShown: false,
+        tabBarActiveTintColor: "#22c55e",
         tabBarStyle: {
-          backgroundColor: TAB_BAR_BG,
-          borderTopColor: '#1f2937',
-          borderTopWidth: 1,
-          height: 85,
-          paddingBottom: 8,
-          paddingTop: 8,
-        },
-        headerStyle: {
-          backgroundColor: DARK_BG,
-          borderBottomColor: '#1f2937',
-          borderBottomWidth: 1,
-        },
-        headerTintColor: '#f9fafb',
-        headerTitleStyle: {
-          fontWeight: '600',
+          backgroundColor: "#020617",
         },
       }}
     >
       <Tabs.Screen
-        name="index"
+        name="today"
         options={{
-          title: 'Discover',
+          title: "Today",
           tabBarIcon: ({ color, size }) => (
-            <Ionicons name="search" size={size} color={color} />
-          ),
-          headerShown: false,
-        }}
-      />
-      <Tabs.Screen
-        name="requests"
-        options={{
-          title: 'Requests',
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="person-add" size={size} color={color} />
+            <Ionicons name="calendar" size={size} color={color} />
           ),
         }}
       />
+
       <Tabs.Screen
-        name="duo"
+        name="people"
         options={{
-          title: 'Duo',
+          title: "People",
           tabBarIcon: ({ color, size }) => (
             <Ionicons name="people" size={size} color={color} />
           ),
         }}
       />
+
+      <Tabs.Screen
+        name="duo"
+        options={{
+          title: "Duo",
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="fitness" size={size} color={color} />
+          ),
+        }}
+      />
+
       <Tabs.Screen
         name="profile"
         options={{
-          title: 'Profile',
+          title: "Profile",
           tabBarIcon: ({ color, size }) => (
             <Ionicons name="person" size={size} color={color} />
           ),
         }}
       />
+
     </Tabs>
   );
 }

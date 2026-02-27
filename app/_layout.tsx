@@ -16,7 +16,7 @@ function AuthGate() {
     if (!user && !inAuthGroup) {
       router.replace("/(auth)/login");
     } else if (user && inAuthGroup) {
-      router.replace("/(app)/index");
+      router.replace("/(app)/today");
     }
   }, [user, loading, segments, router]);
 
