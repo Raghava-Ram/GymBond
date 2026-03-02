@@ -1,17 +1,17 @@
 import type { User } from "firebase/auth";
 import {
-  createUserWithEmailAndPassword,
-  onAuthStateChanged,
-  signInWithEmailAndPassword,
-  signOut,
+    createUserWithEmailAndPassword,
+    onAuthStateChanged,
+    signInWithEmailAndPassword,
+    signOut,
 } from "firebase/auth";
 import { doc, getDoc } from "firebase/firestore";
 import {
-  PropsWithChildren,
-  createContext,
-  useContext,
-  useEffect,
-  useState,
+    PropsWithChildren,
+    createContext,
+    useContext,
+    useEffect,
+    useState,
 } from "react";
 
 import { auth, db } from "../lib/firebase";
@@ -66,7 +66,21 @@ export const AuthProvider = ({ children }: PropsWithChildren) => {
       try {
         const ref = doc(db, "users", firebaseUser.uid);
         const snap = await getDoc(ref);
-        setHasProfile(snap.exists());
+
+        // treat a profile as "complete" only when the document exists
+        // _and_ it has the required fields filled out. we want users who
+        // have an empty doc (created during signup) to still be sent to
+        // the profile flow.
+        if (snap.exists()) {
+          const data = snap.data();
+          const complete =
+            typeof data.name === "string" &&
+            data.name.trim() !== "";
+
+          setHasProfile(!!complete);
+        } else {
+          setHasProfile(false);
+        }
       } catch (error) {
         console.error("[Auth] Error checking profile document", error);
         setHasProfile(false);

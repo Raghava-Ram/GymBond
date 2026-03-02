@@ -1,3 +1,4 @@
+import { useRouter } from 'expo-router';
 import {
   collection,
   doc,
@@ -49,6 +50,7 @@ type Duo = {
 
 export default function DuoScreen() {
   const { user } = useAuth();
+  const router = useRouter();
   const [duo, setDuo] = useState<Duo | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -155,8 +157,7 @@ export default function DuoScreen() {
   };
 
   const handleStartWorkout = () => {
-    // Placeholder for workout logic
-    console.log('Start workout with', duo?.partnerName);
+    router.push('/(app)/today');
   };
 
   const handleApproveEnd = async () => {
@@ -280,7 +281,7 @@ export default function DuoScreen() {
                 {duo.partnerName}
                 {duo.partnerAge ? `, ${duo.partnerAge}` : ''}
               </Text>
-              
+
               {duo.partnerGoal ? (
                 <Text style={styles.meta}>
                   Goal: <Text style={styles.metaValue}>{duo.partnerGoal}</Text>

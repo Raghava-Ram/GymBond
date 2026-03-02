@@ -1,15 +1,17 @@
 import { Link, useRouter } from "expo-router";
 import { useState } from "react";
 import {
-    KeyboardAvoidingView,
-    Platform,
-    Pressable,
-    StyleSheet,
-    Text,
-    TextInput,
-    View,
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
 } from "react-native";
 
+import { auth, db } from "@/lib/firebase";
+import { doc, serverTimestamp, setDoc } from "firebase/firestore";
 import { useAuth } from "../../components/AuthProvider";
 
 const DARK_BG = "#020617";
@@ -45,7 +47,20 @@ export default function SignupScreen() {
       return;
     }
 
-    router.replace("/(app)/today");
+    // Create user document in Firestore
+    const user = auth.currentUser;
+    if (user) {
+      await setDoc(doc(db, "users", user.uid), {
+        name: "",
+        currentStreak: 0,
+        longestStreak: 0,
+        lastWorkoutDate: "",
+        activeDuoId: null,
+        createdAt: serverTimestamp(),
+      });
+    }
+
+    // AuthGate will handle navigation
   };
 
   return (

@@ -1,24 +1,24 @@
-import { Slot, useRouter, useSegments } from "expo-router";
+import { Slot, useRouter } from "expo-router";
 import { useEffect } from "react";
 import { ActivityIndicator, View } from "react-native";
 import { AuthProvider, useAuth } from "../components/AuthProvider";
 
 function AuthGate() {
-  const { user, loading } = useAuth();
-  const segments = useSegments();
+  const { user, loading, hasProfile } = useAuth();
   const router = useRouter();
 
   useEffect(() => {
     if (loading) return;
 
-    const inAuthGroup = segments[0] === "(auth)";
-
-    if (!user && !inAuthGroup) {
+    if (!user) {
       router.replace("/(auth)/login");
-    } else if (user && inAuthGroup) {
+    } else if (!hasProfile) {
+      // still need to fill out profile before entering the app
+      router.replace("/(app)/profile/create");
+    } else {
       router.replace("/(app)/today");
     }
-  }, [user, loading, segments, router]);
+  }, [user, loading, hasProfile]);
 
   if (loading) {
     return (

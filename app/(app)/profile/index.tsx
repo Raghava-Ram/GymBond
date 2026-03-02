@@ -1,23 +1,23 @@
+import { useRouter } from 'expo-router';
 import {
-  doc,
-  getDoc,
-  onSnapshot,
-  updateDoc
+    doc,
+    getDoc,
+    onSnapshot,
+    updateDoc
 } from 'firebase/firestore';
 import { useEffect, useState } from 'react';
 import {
-  ActivityIndicator,
-  Alert,
-  Pressable,
-  SafeAreaView,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View
+    ActivityIndicator,
+    Alert,
+    Pressable,
+    SafeAreaView,
+    ScrollView,
+    StyleSheet,
+    Text,
+    View
 } from 'react-native';
-
-import { useAuth } from '../../components/AuthProvider';
-import { db } from '../../lib/firebase';
+import { useAuth } from '../../../components/AuthProvider';
+import { db } from '../../../lib/firebase';
 
 const MUSCLE_GROUPS = [
   "Back",
@@ -46,20 +46,32 @@ type UserProfile = {
   goal?: string;
   preferredTime?: string;
   bio?: string;
-  individualStreak?: number;
+  currentStreak?: number;
+  longestStreak?: number;
   lastWorkout?: any;
   activeDuoId?: string | null;
   createdAt?: any;
 };
 
 export default function ProfileScreen() {
-  const { logout, user } = useAuth();
+  const { logout, user, hasProfile } = useAuth();
+  const router = useRouter();
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const createEmptyDay = () => ({
     muscles: [],
     isRest: false,
   });
+
+  // if the authentication provider already knows the profile is
+  // incomplete, immediately send the user to the creation form. this
+  // avoids flashing the old screen and then redirecting later when the
+  // database request resolves.
+  useEffect(() => {
+    if (user && !hasProfile) {
+      router.replace("/(app)/profile/create");
+    }
+  }, [user, hasProfile]);
 
   const [weeklyPlan, setWeeklyPlan] = useState<any>({
     sunday: createEmptyDay(),
@@ -88,6 +100,16 @@ export default function ProfileScreen() {
       if (data?.weeklyPlan) {
         setWeeklyPlan(data.weeklyPlan);
       }
+      // keep streak info fresh
+      setProfile((prev) =>
+        prev
+          ? {
+              ...prev,
+              currentStreak: data.currentStreak || 0,
+              longestStreak: data.longestStreak || 0,
+            }
+          : prev
+      );
     });
 
     return unsubscribe;
@@ -171,13 +193,21 @@ export default function ProfileScreen() {
 
       if (userSnap.exists()) {
         const userData = userSnap.data();
-        setProfile({
-          name: userData.name || 'Unknown',
+        
+        // 🚨 PROFILE INCOMPLETE CHECK (name only – weekly plan optional)
+        if (!userData.name || userData.name.trim() === "") {
+          router.replace("/(app)/profile/create");
+          return;
+        }
+
+          setProfile({
+          name: userData.name,
           age: userData.age,
           goal: userData.goal,
           preferredTime: userData.preferredTime,
           bio: userData.bio,
-          individualStreak: userData.individualStreak || 0,
+          currentStreak: userData.currentStreak || 0,
+          longestStreak: userData.longestStreak || 0,
           lastWorkout: userData.lastWorkout,
           activeDuoId: userData.activeDuoId || null,
           createdAt: userData.createdAt,
@@ -214,9 +244,7 @@ export default function ProfileScreen() {
   };
 
   const handleEditProfile = () => {
-    // Navigate to edit profile (placeholder)
-    // TODO: Implement edit profile functionality
-    Alert.alert('Edit Profile', 'Edit profile functionality coming soon!');
+    router.push("/(app)/profile/edit");
   };
 
   if (loading) {
@@ -278,17 +306,13 @@ export default function ProfileScreen() {
               <Text style={styles.sectionTitle}>Stats</Text>
               <View style={styles.statsRow}>
                 <View style={styles.statItem}>
-                  <Text style={styles.statValue}>{profile.individualStreak || 0}</Text>
-                  <Text style={styles.statLabel}>Day Streak</Text>
+                  <Text style={styles.statValue}>{profile.currentStreak || 0}</Text>
+                  <Text style={styles.statLabel}>Current Streak</Text>
                 </View>
                 <View style={styles.statDivider} />
                 <View style={styles.statItem}>
-                  <Text style={styles.statValue}>
-                    {profile.activeDuoId ? '👥' : '🏃‍♂️'}
-                  </Text>
-                  <Text style={styles.statLabel}>
-                    {profile.activeDuoId ? 'In Duo' : 'Solo'}
-                  </Text>
+                  <Text style={styles.statValue}>{profile.longestStreak || 0}</Text>
+                  <Text style={styles.statLabel}>Longest Streak</Text>
                 </View>
               </View>
             </View>

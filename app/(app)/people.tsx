@@ -2,6 +2,7 @@ import {
     addDoc,
     collection,
     doc,
+    getDoc,
     getDocs,
     onSnapshot,
     orderBy,
@@ -9,6 +10,7 @@ import {
     serverTimestamp,
     updateDoc,
     where,
+    writeBatch,
     type DocumentData
 } from "firebase/firestore";
 import { useEffect, useState } from "react";
@@ -42,14 +44,71 @@ type DiscoverUser = {
   bio: string;
 };
 
-function RequestsSection() {
+type BondRequest = {
+  id: string;
+  from: string;
+  to: string;
+  status: string;
+  createdAt: any;
+  senderInfo?: DiscoverUser;
+};
+
+function RequestsSection({
+  incomingRequests,
+  onAccept,
+  onDecline,
+  processingId,
+}: {
+  incomingRequests: BondRequest[];
+  onAccept: (req: BondRequest) => void;
+  onDecline: (id: string) => void;
+  processingId: string | null;
+}) {
   return (
     <View style={styles.requestsContainer}>
       <Text style={styles.sectionTitle}>Bond Requests</Text>
-      <Text style={styles.emptyText}>No pending requests</Text>
-      <Text style={styles.subText}>
-        When someone sends you a bond request, it will appear here.
-      </Text>
+      
+      {incomingRequests.length === 0 ? (
+        <>
+          <Text style={styles.emptyText}>No pending requests</Text>
+          <Text style={styles.subText}>
+            When someone sends you a bond request, it will appear here.
+          </Text>
+        </>
+      ) : (
+        incomingRequests.map((req) => (
+          <View key={req.id} style={styles.requestCard}>
+            <View style={styles.requestInfo}>
+              <Text style={styles.requestName}>
+                {req.senderInfo?.name || "Unknown User"}
+              </Text>
+              {req.senderInfo?.goal && (
+                <Text style={styles.requestMeta}>Goal: {req.senderInfo.goal}</Text>
+              )}
+            </View>
+            <View style={styles.requestActions}>
+              <Pressable
+                style={[styles.actionBtn, styles.declineBtn]}
+                onPress={() => onDecline(req.id)}
+                disabled={processingId === req.id}
+              >
+                <Text style={styles.declineBtnText}>Decline</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.actionBtn, styles.acceptBtn]}
+                onPress={() => onAccept(req)}
+                disabled={processingId === req.id}
+              >
+                {processingId === req.id ? (
+                  <ActivityIndicator size="small" color={DARK_BG} />
+                ) : (
+                  <Text style={styles.acceptBtnText}>Accept</Text>
+                )}
+              </Pressable>
+            </View>
+          </View>
+        ))
+      )}
     </View>
   );
 }
@@ -61,7 +120,9 @@ function useDiscoverUsers() {
   const [refreshing, setRefreshing] = useState(false);
   const [activeDuoId, setActiveDuoId] = useState<string | null>(null);
   const [pendingOutgoing, setPendingOutgoing] = useState<string[]>([]);
+  const [incomingRequests, setIncomingRequests] = useState<BondRequest[]>([]);
   const [sendingFor, setSendingFor] = useState<string | null>(null);
+  const [processingRequestId, setProcessingRequestId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!db || !user?.uid) {
@@ -104,24 +165,77 @@ function useDiscoverUsers() {
       setActiveDuoId(data?.activeDuoId || null);
     });
 
-    // Real-time listener for outgoing bond requests
+    // Real-time listener for incoming AND outgoing bond requests
     const bondsRef = collection(db, "bondRequests");
-    const bondsQuery = query(
+    
+    // Outgoing requests
+    const outgoingQuery = query(
       bondsRef,
       where("from", "==", user.uid)
     );
 
-    const unsubscribeBonds = onSnapshot(bondsQuery, (snapshot) => {
+    const unsubscribeOutgoing = onSnapshot(outgoingQuery, (snapshot) => {
       const pendingIds = snapshot.docs
         .filter((docSnap) => docSnap.data().status === "pending")
         .map((docSnap) => docSnap.data().to);
       setPendingOutgoing(pendingIds);
     });
 
+    // Incoming requests
+    const incomingQuery = query(
+      bondsRef,
+      where("to", "==", user.uid),
+      where("status", "==", "pending")
+    );
+
+    const unsubscribeIncoming = onSnapshot(incomingQuery, async (snapshot) => {
+      const requests: BondRequest[] = [];
+      
+      for (const docSnap of snapshot.docs) {
+        const data = docSnap.data();
+        const req: BondRequest = {
+          id: docSnap.id,
+          from: data.from,
+          to: data.to,
+          status: data.status,
+          createdAt: data.createdAt,
+        };
+
+        // Fetch sender details
+        try {
+          const senderDoc = await getDoc(doc(db, "users", data.from));
+          if (senderDoc.exists()) {
+            const senderData = senderDoc.data();
+            req.senderInfo = {
+               id: senderDoc.id,
+               name: senderData.name,
+               age: senderData.age,
+               goal: senderData.goal,
+               preferredTime: senderData.preferredTime,
+               bio: senderData.bio,
+            };
+          }
+        } catch (err) {
+          console.error("Failed to fetch sender info", err);
+        }
+        requests.push(req);
+      }
+      
+      // Sort manually since we might not have a composite index for this query yet
+      requests.sort((a, b) => {
+         const timeA = a.createdAt?.toMillis() || 0;
+         const timeB = b.createdAt?.toMillis() || 0;
+         return timeB - timeA;
+      });
+      
+      setIncomingRequests(requests);
+    });
+
     return () => {
       unsubscribeUsers();
       unsubscribeUser();
-      unsubscribeBonds();
+      unsubscribeOutgoing();
+      unsubscribeIncoming();
     };
   }, [user]);
 
@@ -204,6 +318,56 @@ function useDiscoverUsers() {
     }
   };
 
+  const handleAcceptRequest = async (request: BondRequest) => {
+    if (!db || !user?.uid) return;
+    setProcessingRequestId(request.id);
+
+    try {
+      const batch = writeBatch(db);
+      
+      // 1. Update the request status
+      const requestRef = doc(db, "bondRequests", request.id);
+      batch.update(requestRef, { status: "accepted" });
+
+      // 2. Create the Duo document
+      const duoRef = doc(collection(db, "duos"));
+      batch.set(duoRef, {
+        members: [request.from, request.to],
+        status: "active",
+        duoStreak: 0,
+        createdAt: serverTimestamp(),
+      });
+
+      // 3. Update activeDuoId for both users
+      const currentUserRef = doc(db, "users", user.uid);
+      const senderRef = doc(db, "users", request.from);
+      
+      batch.update(currentUserRef, { activeDuoId: duoRef.id });
+      batch.update(senderRef, { activeDuoId: duoRef.id });
+
+      await batch.commit();
+
+    } catch (error) {
+      console.error("Failed to accept bond request", error);
+    } finally {
+      setProcessingRequestId(null);
+    }
+  };
+
+  const handleDeclineRequest = async (requestId: string) => {
+    if (!db) return;
+    setProcessingRequestId(requestId);
+    try {
+      await updateDoc(doc(db, "bondRequests", requestId), {
+        status: "declined",
+      });
+    } catch (error) {
+      console.error("Failed to decline request", error);
+    } finally {
+      setProcessingRequestId(null);
+    }
+  };
+
   const renderItem = ({ item }: { item: DiscoverUser }) => {
     const isBonded = !!activeDuoId;
     const isPending = pendingOutgoing.includes(item.id);
@@ -262,15 +426,28 @@ function useDiscoverUsers() {
 
   return {
     users: members,
+    incomingRequests,
     loading,
     refreshing,
+    processingRequestId,
     renderItem,
     onRefresh,
+    handleAcceptRequest,
+    handleDeclineRequest,
   };
 }
 
 export default function PeopleScreen() {
-  const { users, loading, renderItem, onRefresh } = useDiscoverUsers();
+  const { 
+    users, 
+    incomingRequests,
+    loading, 
+    processingRequestId,
+    renderItem, 
+    onRefresh,
+    handleAcceptRequest,
+    handleDeclineRequest
+  } = useDiscoverUsers();
 
   return (
     <SafeAreaView style={styles.container}>
@@ -282,7 +459,12 @@ export default function PeopleScreen() {
           <View style={{ padding: 20 }}>
             <Text style={styles.mainTitle}>People</Text>
             <View style={{ marginTop: 24 }}>
-              <RequestsSection />
+              <RequestsSection 
+                 incomingRequests={incomingRequests}
+                 onAccept={handleAcceptRequest}
+                 onDecline={handleDeclineRequest}
+                 processingId={processingRequestId}
+              />
             </View>
             <Text style={{ color: TEXT, fontSize: 20, marginTop: 32 }}>
               Discover
@@ -395,5 +577,59 @@ const styles = StyleSheet.create({
     fontSize: 16,
     flex: 1,
     textAlign: "center",
+  },
+  requestCard: {
+    backgroundColor: CARD_BG,
+    borderRadius: 12,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: BORDER,
+    marginBottom: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  requestInfo: {
+    flex: 1,
+    marginRight: 12,
+  },
+  requestName: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: TEXT,
+    marginBottom: 4,
+  },
+  requestMeta: {
+    fontSize: 13,
+    color: MUTED,
+  },
+  requestActions: {
+    flexDirection: "row",
+    gap: 8,
+  },
+  actionBtn: {
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  acceptBtn: {
+    backgroundColor: ACCENT,
+  },
+  acceptBtnText: {
+    color: DARK_BG,
+    fontWeight: "600",
+    fontSize: 14,
+  },
+  declineBtn: {
+    backgroundColor: "transparent",
+    borderWidth: 1,
+    borderColor: BORDER,
+  },
+  declineBtnText: {
+    color: TEXT,
+    fontWeight: "600",
+    fontSize: 14,
   },
 });

@@ -12,8 +12,8 @@ import {
 } from "react-native";
 
 import { doc, serverTimestamp, setDoc } from "firebase/firestore";
-import { useAuth } from "../../components/AuthProvider";
-import { db } from "../../lib/firebase";
+import { useAuth } from "../../../components/AuthProvider";
+import { db } from "../../../lib/firebase";
 
 const DARK_BG = "#020617";
 const CARD_BG = "#020617";
@@ -193,6 +193,10 @@ export default function CreateProfileScreen() {
   );
 }
 
+
+
+// helpers used in the form
+
 type FieldProps = {
   label: string;
   children: React.ReactNode;
@@ -341,4 +345,5 @@ const styles = StyleSheet.create({
     fontSize: 13,
   },
 });
+
 
